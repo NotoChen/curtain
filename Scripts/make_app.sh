@@ -49,3 +49,12 @@ codesign -dv "$APP" 2>&1 | grep -E "Identifier|Authority|Signature|TeamIdentifie
 echo "==> done: $APP"
 echo "启动：open $APP"
 echo "CLI： $APP/Contents/MacOS/curtainctl status"
+
+if [ "${INSTALL:-0}" = "1" ]; then
+    echo "==> install to /Applications/Curtain.app"
+    pkill -f "Curtain.app/Contents/MacOS/curtaind" 2>/dev/null || true
+    sleep 1
+    rm -rf /Applications/Curtain.app
+    cp -R "$APP" /Applications/Curtain.app
+    echo "已安装：/Applications/Curtain.app"
+fi

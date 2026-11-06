@@ -55,8 +55,9 @@ open build/Curtain.app
 
 > macOS 26/27 把这两类权限并进了「设备控制和数据访问」面板，Curtain.app 会被自动加进列表，勾选即可。
 
-> ad-hoc 签名每次重编译都会变，TCC 授权会反复失效。开发时建议先在「钥匙串访问 → 证书助理」建一张代码签名证书，然后：
-> `SIGN_ID="Curtain Dev" ./Scripts/make_app.sh`
+> 签名身份默认用本地自签名证书 `Curtain Dev`（`make_app.sh` 会自动检测），固定证书后 TCC 授权可以跨重新编译保留。没有该证书时退回 ad-hoc，授权每次重编译都会失效（tccd 会报 `Failed to match existing code requirement`）。
+>
+> 安装到 `/Applications`：`INSTALL=1 ./Scripts/make_app.sh`（推荐，路径固定，授权更稳）。
 
 ## 使用
 

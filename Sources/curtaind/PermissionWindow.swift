@@ -58,7 +58,7 @@ final class PermissionWindowController: NSWindowController {
         title.font = .systemFont(ofSize: 16, weight: .semibold)
         stack.addArrangedSubview(title)
 
-        let subtitle = NSTextField(labelWithString: "点右侧按钮会直接打开系统设置里对应的面板。macOS 26 起「辅助功能」并入了「设备控制和数据访问」，列表里勾选 Curtain.app 即可；勾上后这里的状态会自动变绿。")
+        let subtitle = NSTextField(labelWithString: "点右侧按钮会直接打开系统设置里对应的面板。macOS 26 起「辅助功能」并入了「设备控制和数据访问」，勾选 Curtain.app 即可；列表里没有它时，点面板下方的 + 选择 /Applications/Curtain.app。勾上后这里会自动变绿。")
         subtitle.font = .systemFont(ofSize: 12)
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byWordWrapping
