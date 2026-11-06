@@ -1,24 +1,18 @@
 #!/bin/bash
 # 组 Curtain.app：release 构建 + Info.plist + 签名。
 #
-# 默认用本地自签名证书 "Curtain Dev" 签名。固定证书后，TCC（辅助功能/屏幕录制）
-# 的授权可以跨重新编译保留；ad-hoc 签名每次重编译都会变，TCC 会报
-# "Failed to match existing code requirement" 而拒绝生效。
+# 默认 ad-hoc 签名，不依赖任何证书。代价：每次重新编译后，系统设置里的
+# TCC 授权（设备控制和数据访问 / 录屏与系统录音）需要把 Curtain.app 取消再勾一次
+# ——ad-hoc 的代码身份就是 cdhash，代码变了就匹配不上。
 #
-# 覆盖签名身份：
-#   SIGN_ID="Apple Development: xxx" ./Scripts/make_app.sh
+# 想避免反复授权，可以指定固定签名身份（可选）：
+#   SIGN_ID="某张代码签名证书的 CN" INSTALL=1 ./Scripts/make_app.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 APP="build/Curtain.app"
 
-if [ -z "${SIGN_ID:-}" ]; then
-    if security find-identity -v -p codesigning 2>/dev/null | grep -q '"Curtain Dev"'; then
-        SIGN_ID="Curtain Dev"
-    else
-        SIGN_ID="-"
-    fi
-fi
+SIGN_ID="${SIGN_ID:--}"
 
 echo "==> swift build -c release"
 swift build -c release --product curtaind
@@ -35,7 +29,7 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 
 echo "==> codesign (identity: $SIGN_ID)"
 if [ "$SIGN_ID" = "-" ]; then
-    echo "    警告：没有固定签名证书，退回 ad-hoc。每次重编译后 TCC 授权都会失效。"
+    echo "    ad-hoc 签名：重装后需要在系统设置里把 Curtain.app 取消再勾一次。"
     codesign --force --sign - "$APP/Contents/MacOS/curtainctl"
     codesign --force --sign - "$APP"
 else

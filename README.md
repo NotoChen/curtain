@@ -55,9 +55,12 @@ open build/Curtain.app
 
 > macOS 26/27 把这两类权限并进了「设备控制和数据访问」面板，Curtain.app 会被自动加进列表，勾选即可。
 
-> 签名身份默认用本地自签名证书 `Curtain Dev`（`make_app.sh` 会自动检测），固定证书后 TCC 授权可以跨重新编译保留。没有该证书时退回 ad-hoc，授权每次重编译都会失效（tccd 会报 `Failed to match existing code requirement`）。
+> 默认 **ad-hoc 签名**，不依赖证书。代价很具体：ad-hoc 的代码身份就是 cdhash，我每次改代码重新编译后，你需要在系统设置里把 Curtain.app **取消再勾一次**（两个面板各一次）。app 检测到权限失效会自己弹引导面板。
 >
-> 安装到 `/Applications`：`INSTALL=1 ./Scripts/make_app.sh`（推荐，路径固定，授权更稳）。
+> 不想反复授权时，可以给脚本指定一个固定签名身份（可选，不是必需）：
+> `SIGN_ID="证书 CN" INSTALL=1 ./Scripts/make_app.sh`
+>
+> 安装到 `/Applications`：`INSTALL=1 ./Scripts/make_app.sh`（推荐，路径固定）。
 
 ## 使用
 
