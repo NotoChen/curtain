@@ -8,8 +8,9 @@ public final class Shield {
     public private(set) var isUp = false
 
     private let shieldingLevel = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
-    /// 认证面板要显示在幕帘之上：降到屏保层级（高于所有应用窗口，低于系统面板）。
-    private let demotedLevel = NSWindow.Level(rawValue: 1000)
+    /// 认证面板要显示在幕帘之上：降到普通层级，让系统面板（更高层级）浮出来。
+    /// 幕帘此刻仍是最前面的普通窗口，照样盖住所有应用窗口。
+    private let demotedLevel = NSWindow.Level.normal
 
     public init() {}
 

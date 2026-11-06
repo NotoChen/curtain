@@ -7,6 +7,7 @@ func usage() -> Never {
 
       curtainctl on                          升起幕帘（黑屏 + 拦截物理输入）
       curtainctl off                         请求解除（长按 Esc 或走 Touch ID）
+      curtainctl panic                       应急强制撤幕（不验指纹，需本地 shell）
       curtainctl status                      查看状态
       curtainctl capture [--out PATH] [--display N]
                                              截取完整桌面（画面中不含幕帘）
@@ -36,6 +37,8 @@ case "off":
     request = ControlRequest(cmd: "off")
 case "status":
     request = ControlRequest(cmd: "status")
+case "panic":
+    request = ControlRequest(cmd: "panic")
 case "capture":
     request = ControlRequest(cmd: "capture", out: value(for: "--out"), display: value(for: "--display").flatMap(Int.init))
 case "record":

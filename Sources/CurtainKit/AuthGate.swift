@@ -5,6 +5,11 @@ import LocalAuthentication
 public final class AuthGate {
     public init() {}
 
+    /// 生物识别硬件是否可用。不可用时不能把人锁在外面，调用方应允许直接撤幕。
+    public func isAvailable() -> Bool {
+        LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+    }
+
     public func authenticate(reason: String, completion: @escaping (Bool) -> Void) {
         let ctx = LAContext()
         var err: NSError?

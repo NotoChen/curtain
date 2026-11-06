@@ -63,11 +63,20 @@ curtainctl capture --out ~/Desktop/shot.png
 curtainctl record start --out ~/Desktop/rec.mp4
 curtainctl record stop
 curtainctl audit 20
+curtainctl panic              # 应急强制撤幕，不验指纹
 ```
 
 解除：**长按 Esc 两秒**（或 `curtainctl off`）→ Touch ID。除指纹外没有别的出口，也没有倒计时；猫踩出认证框也过不了指纹。
 
-退出：`curtainctl off` 验指纹，或直接结束 curtaind 进程（窗口随进程销毁，不会把自己锁在外面）。
+### 卡住了怎么办
+
+按优先级：
+
+1. `curtainctl panic` —— 走本地 socket 强制撤幕，不验指纹。猫不会敲命令，这是安全的自救口。
+2. `pkill -TERM curtaind` —— 进程一死，黑窗随之销毁，输入立刻恢复。
+3. 生物识别硬件不可用时，`curtainctl off` 会直接撤幕并记 `biometrics_unavailable` 审计，不会把人锁在黑屏里。
+
+> 退出入口必须做在事件 tap 内部，不能做成菜单项：幕帘期间物理鼠标被吞掉，菜单根本点不到。
 
 ## 配置文件
 

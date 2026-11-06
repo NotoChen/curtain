@@ -13,6 +13,7 @@ public final class InputGuard {
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var holdWorkItem: DispatchWorkItem?
+    private var escDown = false
     private let selfPID = getpid()
 
     public init() {}
@@ -59,10 +60,14 @@ public final class InputGuard {
 
     public func setEnabled(_ on: Bool) {
         isEnabled = on
-        if !on { cancelHold() }
+        if !on {
+            escDown = false
+            cancelHold()
+        }
     }
 
     public func stop() {
+        escDown = false
         cancelHold()
         if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
         if let source = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
@@ -83,7 +88,16 @@ public final class InputGuard {
         if type == .keyDown || type == .keyUp {
             let code = event.getIntegerValueField(.keyboardEventKeycode)
             if code == 53 { // Esc
-                if type == .keyDown { scheduleHold() } else { cancelHold() }
+                // 关键：按住时系统会持续发 autorepeat 的 keyDown。
+                // 以前每个重复事件都 cancel + 重新计时，计时器永远到不了 2 秒。
+                let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+                if type == .keyDown, !isRepeat, !escDown {
+                    escDown = true
+                    scheduleHold()
+                } else if type == .keyUp {
+                    escDown = false
+                    cancelHold()
+                }
             }
         }
 

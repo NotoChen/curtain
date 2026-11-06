@@ -71,6 +71,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.requestExit()
                 return ControlResponse(ok: true, message: "已请求 Touch ID，验证通过后撤幕")
             }
+        case "panic":
+            // 应急出口：只走本地 shell，猫不可能敲命令。用于指纹路径失效时自救。
+            return onMain {
+                guard self.curtainOn else { return ControlResponse(ok: true, message: "幕帘本来就没开") }
+                self.audit.write("panic_off", [:])
+                self.turnOff(reason: "panic")
+                return ControlResponse(ok: true, message: "已强制撤幕（panic）")
+            }
         case "status":
             return onMain { self.status() }
         case "capture":
@@ -196,6 +204,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 长按 Esc 或 curtainctl off：降层级让指纹面板显形，然后只认 Touch ID。
     private func requestExit() {
         guard curtainOn, !authPending else { return }
+
+        // 硬件不可用时不能把人锁在黑屏里。
+        guard auth.isAvailable() else {
+            audit.write("biometrics_unavailable", [:])
+            turnOff(reason: "biometrics_unavailable")
+            return
+        }
+
         authPending = true
         shield.demoteForAuth()
         NSApp.activate(ignoringOtherApps: true)
