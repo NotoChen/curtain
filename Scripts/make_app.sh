@@ -1,12 +1,24 @@
 #!/bin/bash
 # 组 Curtain.app：release 构建 + Info.plist + 签名。
-# 想避免每次重编译后 TCC 权限失效，请先建一张自签名证书再执行：
-#   SIGN_ID="Curtain Dev" ./Scripts/make_app.sh
+#
+# 默认用本地自签名证书 "Curtain Dev" 签名。固定证书后，TCC（辅助功能/屏幕录制）
+# 的授权可以跨重新编译保留；ad-hoc 签名每次重编译都会变，TCC 会报
+# "Failed to match existing code requirement" 而拒绝生效。
+#
+# 覆盖签名身份：
+#   SIGN_ID="Apple Development: xxx" ./Scripts/make_app.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 APP="build/Curtain.app"
-SIGN_ID="${SIGN_ID:--}"
+
+if [ -z "${SIGN_ID:-}" ]; then
+    if security find-identity -v -p codesigning 2>/dev/null | grep -q '"Curtain Dev"'; then
+        SIGN_ID="Curtain Dev"
+    else
+        SIGN_ID="-"
+    fi
+fi
 
 echo "==> swift build -c release"
 swift build -c release --product curtaind
@@ -22,9 +34,18 @@ cp "$BIN_DIR/curtainctl" "$APP/Contents/MacOS/curtainctl"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
 echo "==> codesign (identity: $SIGN_ID)"
-codesign --force --options runtime --sign "$SIGN_ID" "$APP/Contents/MacOS/curtainctl"
-codesign --force --options runtime --sign "$SIGN_ID" "$APP"
+if [ "$SIGN_ID" = "-" ]; then
+    echo "    警告：没有固定签名证书，退回 ad-hoc。每次重编译后 TCC 授权都会失效。"
+    codesign --force --sign - "$APP/Contents/MacOS/curtainctl"
+    codesign --force --sign - "$APP"
+else
+    codesign --force --timestamp=none --sign "$SIGN_ID" "$APP/Contents/MacOS/curtainctl"
+    codesign --force --timestamp=none --sign "$SIGN_ID" "$APP"
+fi
+
+echo "==> 签名信息"
+codesign -dv "$APP" 2>&1 | grep -E "Identifier|Authority|Signature|TeamIdentifier" || true
 
 echo "==> done: $APP"
-echo "启动：open $APP    （首次需要在系统设置里授予 屏幕录制 + 辅助功能）"
+echo "启动：open $APP"
 echo "CLI： $APP/Contents/MacOS/curtainctl status"

@@ -14,7 +14,7 @@ final class PermissionWindowController: NSWindowController {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 540, height: 320),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 390),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -58,7 +58,7 @@ final class PermissionWindowController: NSWindowController {
         title.font = .systemFont(ofSize: 16, weight: .semibold)
         stack.addArrangedSubview(title)
 
-        let subtitle = NSTextField(labelWithString: "点右侧按钮会直接打开对应的系统设置面板，勾选 Curtain 即可。授权后这里的状态会自动变成绿色。")
+        let subtitle = NSTextField(labelWithString: "点右侧按钮会直接打开系统设置里对应的面板。macOS 26 起「辅助功能」并入了「设备控制和数据访问」，列表里勾选 Curtain.app 即可；勾上后这里的状态会自动变绿。")
         subtitle.font = .systemFont(ofSize: 12)
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byWordWrapping
@@ -68,8 +68,8 @@ final class PermissionWindowController: NSWindowController {
 
         stack.addArrangedSubview(makeRow(
             key: "ax",
-            title: "辅助功能",
-            detail: "拦截键盘鼠标（防误触），以及长按 Esc 触发 Touch ID。",
+            title: "设备控制和数据访问（原「辅助功能」）",
+            detail: "拦截键盘鼠标（防误触）、长按 Esc 触发 Touch ID。macOS 26 起这个面板同时管录屏与控制权限。",
             action: #selector(openAccessibility)
         ))
 
