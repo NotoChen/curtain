@@ -58,6 +58,9 @@ public final class Shield {
     private func build() {
         for screen in NSScreen.screens {
             let w = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            // 默认 true：close() 会额外 release 一次，和 ARC 的强引用叠加就是 over-release，
+            // 表现为"向已释放对象发消息"的崩溃（本次闪退的根因）。
+            w.isReleasedWhenClosed = false
             w.level = shieldingLevel
             w.backgroundColor = .black
             w.isOpaque = true

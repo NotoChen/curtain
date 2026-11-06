@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CurtainKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -54,6 +55,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         audit.write("daemon_start", ["displays": NSScreen.screens.count])
+        preflightAccessibility()
+    }
+
+    /// 启动就申请辅助功能权限：没有它事件拦截建不起来，提前弹系统提示，
+    /// 而不是等用户点「开启幕帘」才失败。
+    private func preflightAccessibility() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        let trusted = AXIsProcessTrustedWithOptions(options)
+        audit.write("accessibility_check", ["trusted": trusted])
+        if !trusted {
+            NSLog("Curtain: Accessibility 未授权，事件拦截将无法启动")
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -161,16 +174,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func turnOn() -> ControlResponse {
         guard !curtainOn else { return ControlResponse(ok: true, message: "幕帘已经开着") }
+        NSLog("curtain.turnOn begin displays=%d", NSScreen.screens.count)
         shield.raise()
+        NSLog("curtain.turnOn shield raised")
         guard inputGuard.start() else {
+            NSLog("curtain.turnOn tap FAILED")
             shield.lower()
-            return .failure("事件拦截启动失败：请在「系统设置 → 隐私与安全性 → 辅助功能」里勾选 Curtain")
+            NSLog("curtain.turnOn shield lowered after failure")
+            return .failure("事件拦截启动失败：请在「系统设置 → 隐私与安全性 → 辅助功能」里勾选 Curtain，然后重新开启幕帘")
         }
+        NSLog("curtain.turnOn tap ok")
         inputGuard.setEnabled(true)
         sentinel.enable()
         curtainOn = true
         updateStatusItem()
         audit.write("curtain_on", ["displays": NSScreen.screens.count])
+        NSLog("curtain.turnOn complete")
 
         if config.safetyTimeoutSeconds > 0 {
             let item = DispatchWorkItem { [weak self] in
@@ -266,11 +285,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func menuOn() {
-        _ = turnOn()
+        // 不在菜单追踪过程中建 shielding 窗口：等这一轮 runloop 结束、菜单关掉再动。
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let response = self.turnOn()
+            if !response.ok { self.presentError(response.message) }
+        }
     }
 
     @objc private func menuOff() {
-        requestExit()
+        DispatchQueue.main.async { [weak self] in self?.requestExit() }
+    }
+
+    private func presentError(_ message: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "幕帘没能开启"
+        alert.informativeText = message
+        alert.addButton(withTitle: "好")
+        alert.runModal()
     }
 
     @objc private func menuStatus() {
