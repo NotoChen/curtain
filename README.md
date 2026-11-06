@@ -66,11 +66,17 @@ open build/Curtain.app
 
 ```bash
 curtainctl on                 # 升起幕帘（屏幕变黑，输入被吞）
-curtainctl status
+curtainctl status             # JSON 状态
+curtainctl doctor             # 自检：权限 / 屏 / tap / Touch ID / 审计链 / 自启
 curtainctl capture --out ~/Desktop/shot.png
-curtainctl record start --out ~/Desktop/rec.mp4
+curtainctl capture --all --out ~/Desktop/shots/s.png    # 每屏一张
+curtainctl capture --region 100,100,400,300 --cursor    # 区域截图（点），带光标
+curtainctl record start --out ~/Desktop/rec.mp4 --fps 30 --bitrate 8000000
 curtainctl record stop
-curtainctl audit 20
+curtainctl audit 20           # 最近 20 条
+curtainctl audit --verify     # 校验哈希链
+curtainctl install-agent      # 开机自启（LaunchAgent，KeepAlive 兼作崩溃看门狗）
+curtainctl uninstall-agent
 curtainctl panic              # 应急强制撤幕，不验指纹
 ```
 
@@ -114,3 +120,24 @@ curtainctl panic              # 应急强制撤幕，不验指纹
 - 挡不住 USB 设备接入这类系统级动作。
 - 幕帘期间会话保持解锁：这是前提，不是副作用。系统一旦锁屏，采集立刻失效。
 - 幕帘只解决「屏幕内容在物理上不可见」，不解决「有屏幕录制权限的进程能不能拿到画面」——那是授权与审计问题。
+
+## 可靠性设计
+
+- **单实例**：`flock` 守门，第二个实例若发现已有健康实例就静默退出（launchd 的 RunAtLoad 也走这条路，不会弹窗打扰）。
+- **开机自启**：LaunchAgent + `KeepAlive`，进程被杀会被 launchd 拉起；`doctor` 里能看到加载状态。
+- **录制抗崩溃**：`movieFragmentInterval = 2s`，即使进程被强杀，mp4 仍可播放。
+- **审计防篡改**：每条记录带 `prev` 与 `hash`，`curtainctl audit --verify` 能定位到具体哪一行被改过；旧格式记录自动跳过并单独计数。
+- **分辨率**：截图/录屏按 `backingScaleFactor` 还原真实像素（Retina 上是 2x，不再只有一半）。
+
+## Roadmap
+
+P0（已完成）：单实例、自启、doctor、区域/多屏/光标、fps/码率、录制分片、审计哈希链。
+
+P1（候选，按价值排序）：
+
+1. **在场感应解锁**：iPhone/Watch 靠近自动撤幕，离开自动落幕（BLE RSSI）。
+2. **对外 API**：本地 HTTP + MCP server，让 Claude Code / Codex 等其它 agent 通过 token 走同一个采集通道（权限与审计仍集中在 curator）。
+3. **设置界面**：allowlist 编辑器、长按阈值、录制参数，替代手改 JSON。
+4. **音频**：录屏带麦克风/系统声音。
+5. **分发**：签名 DMG + Homebrew cask（需要 Developer ID），或 GitHub Actions 出通用构建。
+6. **测试**：状态机单测 + 录制的端到端回归。

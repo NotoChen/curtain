@@ -32,7 +32,7 @@ public final class Recorder: NSObject, SCStreamOutput {
     public private(set) var framesAppended = 0
     public private(set) var appendFailures = 0
 
-    public func start(filter: SCContentFilter, configuration: SCStreamConfiguration, to url: URL) throws {
+    public func start(filter: SCContentFilter, configuration: SCStreamConfiguration, to url: URL, bitrate: Int = 0) throws {
         guard !isRecording else { throw RecorderError.writerSetup("已经在录制") }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if FileManager.default.fileExists(atPath: url.path) { try? FileManager.default.removeItem(at: url) }
@@ -43,14 +43,19 @@ public final class Recorder: NSObject, SCStreamOutput {
         } catch {
             throw RecorderError.writerSetup("\(error)")
         }
+        // 每 2 秒写一个 moov 片段：进程被杀/崩溃时文件仍然可播放。
+        writer.movieFragmentInterval = CMTime(seconds: 2, preferredTimescale: 600)
 
         let width = configuration.width
         let height = configuration.height
-        let settings: [String: Any] = [
+        var settings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
         ]
+        if bitrate > 0 {
+            settings[AVVideoCompressionPropertiesKey] = [AVVideoAverageBitRateKey: bitrate]
+        }
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = true
         guard writer.canAdd(input) else { throw RecorderError.writerSetup("writer 不接受视频输入") }

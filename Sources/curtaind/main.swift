@@ -19,10 +19,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var authPending = false
     private var safetyItem: DispatchWorkItem?
     private var permissionWindow: PermissionWindowController?
+    private var singleInstance: SingleInstance?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Paths.ensureSupportDir()
         config.save()
+
+        // 单实例：第二个实例直接退出，避免两个进程抢同一个 socket 和同一块屏。
+        let instance = SingleInstance()
+        guard instance.acquire() else {
+            // 锁被占用时先问一下在跑的那个：能应答就是健康实例，安静退出（
+            // launchd 的 RunAtLoad 也会走到这里，不该弹窗打扰用户）。
+            if (try? ControlClient.send(ControlRequest(cmd: "status"))) != nil {
+                NSApp.terminate(nil)
+                return
+            }
+            NSSound.beep()
+            let alert = NSAlert()
+            alert.messageText = "Curtain 已经在运行"
+            alert.informativeText = "菜单栏里已经有它的图标，但当前实例没有响应。可以先退出旧实例再打开。"
+            alert.addButton(withTitle: "好")
+            alert.runModal()
+            NSApp.terminate(nil)
+            return
+        }
+        singleInstance = instance
 
         shield = Shield()
         inputGuard = InputGuard()
@@ -120,6 +141,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         case "status":
             return onMain { self.status() }
+        case "doctor":
+            return onMain { self.doctorReport() }
         case "capture":
             return capture(request)
         case "record_start":
@@ -149,15 +172,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func capture(_ request: ControlRequest) -> ControlResponse {
-        let out = request.out ?? Paths.supportDir
-            .appendingPathComponent("shot-\(Int(Date().timeIntervalSince1970)).png").path
+        let options = captureOptions(request)
         do {
-            let result = try broker.screenshot(to: URL(fileURLWithPath: out), displayIndex: request.display ?? 0)
+            if request.allDisplays == true {
+                let dir = request.out.map { URL(fileURLWithPath: $0).deletingLastPathComponent() } ?? Paths.supportDir
+                let base = request.out.map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent }
+                    ?? "shot-\(Int(Date().timeIntervalSince1970))"
+                let results = try broker.screenshotAllDisplays(to: dir, baseName: base, options: options)
+                audit.write("capture_all", ["count": results.count, "dir": dir.path, "cursor": options.cursor])
+                return ControlResponse(ok: true, message: "已保存 \(results.count) 张（每屏一张）", data: [
+                    "count": "\(results.count)",
+                    "dir": dir.path,
+                    "paths": results.map { $0.url.path }.joined(separator: ","),
+                ])
+            }
+
+            let out = request.out ?? Paths.supportDir
+                .appendingPathComponent("shot-\(Int(Date().timeIntervalSince1970)).png").path
+            let result = try broker.screenshot(to: URL(fileURLWithPath: out),
+                                               displayIndex: request.display ?? 0,
+                                               options: options)
             audit.write("capture", [
                 "path": result.url.path,
                 "width": result.width,
                 "height": result.height,
                 "sha256": result.sha256,
+                "cursor": options.cursor,
+                "region": request.region ?? "",
                 "curtain": curtainOn ? "on" : "off",
             ])
             return ControlResponse(ok: true, message: "已保存", data: [
@@ -172,14 +213,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func captureOptions(_ request: ControlRequest) -> CaptureOptions {
+        var region: CGRect?
+        if let raw = request.region {
+            let parts = raw.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            if parts.count == 4 {
+                region = CGRect(x: parts[0], y: parts[1], width: parts[2], height: parts[3])
+            }
+        }
+        return CaptureOptions(
+            cursor: request.cursor ?? false,
+            region: region,
+            fps: max(1, min(request.fps ?? 30, 60)),
+            bitrate: max(0, request.bitrate ?? 0)
+        )
+    }
+
     private func recordStart(_ request: ControlRequest) -> ControlResponse {
         guard !recorder.isRecording else { return .failure("已经在录制") }
         let out = request.out ?? Paths.supportDir
             .appendingPathComponent("rec-\(Int(Date().timeIntervalSince1970)).mp4").path
+        let options = captureOptions(request)
         do {
-            try broker.startRecording(recorder, to: URL(fileURLWithPath: out), displayIndex: request.display ?? 0)
-            audit.write("record_start", ["path": out, "curtain": curtainOn ? "on" : "off"])
-            return ControlResponse(ok: true, message: "开始录制", data: ["path": out])
+            try broker.startRecording(recorder, to: URL(fileURLWithPath: out),
+                                      displayIndex: request.display ?? 0, options: options)
+            audit.write("record_start", [
+                "path": out,
+                "fps": options.fps,
+                "bitrate": options.bitrate,
+                "curtain": curtainOn ? "on" : "off",
+            ])
+            updateStatusItem()
+            return ControlResponse(ok: true, message: "开始录制", data: [
+                "path": out,
+                "fps": "\(options.fps)",
+                "bitrate": "\(options.bitrate)",
+            ])
         } catch {
             audit.write("record_failed", ["error": "\(error)"])
             return .failure("录制启动失败：\(error)")
@@ -190,12 +259,97 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let frames = recorder.framesAppended
             let url = try recorder.stop()
+            updateStatusItem()
             audit.write("record_stop", ["path": url.path, "frames": frames])
             return ControlResponse(ok: true, message: "录制结束", data: ["path": url.path, "frames": "\(frames)"])
         } catch {
+            updateStatusItem()
             audit.write("record_failed", ["error": "\(error)"])
             return .failure("结束录制失败：\(error)")
         }
+    }
+
+    // MARK: - 自检
+
+    private func doctorReport() -> ControlResponse {
+        var lines: [String] = []
+        let ax = Permissions.hasAccessibility()
+        let screen = Permissions.hasScreenRecording()
+        lines.append("权限 设备控制和数据访问：\(ax ? "已授权" : "缺失")")
+        lines.append("权限 录屏与系统录音：\(screen ? "已授权" : "缺失")")
+
+        let displayCount = NSScreen.screens.count
+        let sckCount = broker.displayCount()
+        lines.append("显示器：\(displayCount) 块（SCK 可见 \(sckCount) 块）")
+        lines.append("事件 tap：\(canCreateTap() ? "可创建" : "创建失败")")
+        lines.append("Touch ID：\(auth.isAvailable() ? "可用" : "不可用")")
+
+        let agent = LaunchAgent.status()
+        lines.append("开机自启：\(agent.installed ? "已安装" : "未安装")\(agent.installed ? (agent.loaded ? "、已加载" : "、未加载") : "")")
+
+        let verify = AuditLog.verify()
+        let auditLine = verify.ok
+            ? "审计：\(verify.count) 条已校验" + (verify.legacy > 0 ? "（另有 \(verify.legacy) 条旧格式）" : "") + "，哈希链完整"
+            : "审计：第 \(verify.brokenAtLine ?? -1) 行断裂（\(verify.reason ?? "")）"
+        lines.append(auditLine)
+
+        lines.append("签名：\(signingIdentity())")
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+        lines.append("版本：\(version)")
+        lines.append("可执行文件：\(Bundle.main.bundlePath)")
+        lines.append("状态：幕帘\(curtainOn ? "开启" : "关闭")、录屏\(recorder.isRecording ? "进行中" : "空闲")")
+
+        let data: [String: String] = [
+            "accessibility": ax ? "granted" : "missing",
+            "screen_recording": screen ? "granted" : "missing",
+            "displays": "\(displayCount)",
+            "tap": canCreateTap() ? "ok" : "failed",
+            "touchid": auth.isAvailable() ? "ok" : "unavailable",
+            "audit_ok": verify.ok ? "yes" : "no",
+            "launch_agent": agent.installed ? "installed" : "absent",
+        ]
+        return ControlResponse(ok: true, message: lines.joined(separator: "\n"), data: data)
+    }
+
+    /// 只创建并立刻销毁一个 listen-only tap，用来判断事件拦截权限是否到位。
+    private func canCreateTap() -> Bool {
+        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+        guard let tap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: { _, _, event, _ in Unmanaged.passUnretained(event) },
+            userInfo: nil
+        ) else { return false }
+        CFMachPortInvalidate(tap)
+        return true
+    }
+
+    private func signingIdentity() -> String {
+        var code: SecCode?
+        let attributes = [kSecGuestAttributePid: getpid()] as CFDictionary
+        guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess,
+              let code, let staticCode = try? staticCode(of: code) else {
+            return "未知"
+        }
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let dict = info as? [String: Any] else { return "未知" }
+        let identifier = dict[kSecCodeInfoIdentifier as String] as? String ?? "?"
+        let team = dict[kSecCodeInfoTeamIdentifier as String] as? String
+        let certs = dict[kSecCodeInfoCertificates as String] as? [Any]
+        let kind = certs == nil ? "ad-hoc" : (team.map { "Team \($0)" } ?? "自签名")
+        return "\(identifier)（\(kind)）"
+    }
+
+    private func staticCode(of code: SecCode) throws -> SecStaticCode {
+        var staticCode: SecStaticCode?
+        let status = SecCodeCopyStaticCode(code, [], &staticCode)
+        guard status == errSecSuccess, let staticCode else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
+        return staticCode
     }
 
     // MARK: - 幕帘
@@ -281,6 +435,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         safetyItem?.cancel()
         safetyItem = nil
         permissionWindow?.stopPolling()
+        singleInstance?.release()
+        singleInstance = nil
         if curtainOn {
             inputGuard.setEnabled(false)
             inputGuard.stop()
@@ -300,6 +456,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "开启幕帘", action: #selector(menuOn), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "解除幕帘（长按 Esc → Touch ID）", action: #selector(menuOff), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "结束录制", action: #selector(menuStopRecording), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "权限状态…", action: #selector(menuPermissions), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "状态", action: #selector(menuStatus), keyEquivalent: ""))
@@ -312,7 +469,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusItem() {
-        statusItem?.button?.title = curtainOn ? "⬛︎" : "▢"
+        let title: String
+        if authPending {
+            title = "🔒"
+        } else if recorder.isRecording {
+            title = "⏺"
+        } else if curtainOn {
+            title = "⬛︎"
+        } else {
+            title = "▢"
+        }
+        statusItem?.button?.title = title
     }
 
     @objc private func menuOn() {
@@ -339,10 +506,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [weak self] in self?.showPermissionGuide() }
     }
 
-    private func presentError(_ message: String) {
+    @objc private func menuStopRecording() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard self.recorder.isRecording else {
+                self.presentError("当前没有在录制", title: "Curtain")
+                return
+            }
+            _ = self.recordStop()
+        }
+    }
+
+    private func presentError(_ message: String, title: String = "幕帘没能开启") {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "幕帘没能开启"
+        alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: "好")
         alert.runModal()
