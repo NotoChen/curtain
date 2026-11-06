@@ -49,7 +49,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shield = Shield()
         shield.hidesCursor = config.hideCursorDuringCurtain
         inputGuard = InputGuard()
-        inputGuard.allowlist = config.allowlist
         inputGuard.holdToAuthSeconds = config.holdToAuthSeconds
         inputGuard.onHoldEscape = { [weak self] in self?.requestExit() }
         auth = AuthGate()
@@ -165,7 +164,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "displays": "\(NSScreen.screens.count)",
             "auth_pending": authPending ? "yes" : "no",
             "recording": recorder.isRecording ? "yes" : "no",
-            "allowlist": "\(config.allowlist.count)",
             "hold_to_auth": "\(config.holdToAuthSeconds)s",
             "accessibility": Permissions.hasAccessibility() ? "granted" : "missing",
             "screen_recording": Permissions.hasScreenRecording() ? "granted" : "missing",
@@ -224,19 +222,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         return CaptureOptions(
-            cursor: request.cursor ?? config.captureCursor,
+            cursor: request.cursor ?? false,
             region: region,
-            fps: max(1, min(request.fps ?? config.recordingFPS, 60)),
-            bitrate: max(0, request.bitrate ?? config.recordingBitrate)
+            fps: max(1, min(request.fps ?? 30, 60)),
+            bitrate: max(0, request.bitrate ?? 0)
         )
     }
 
-    /// 默认输出位置：设置里指定的目录，否则 Application Support。
+    /// 默认输出位置：Application Support（截图目录属于调用方参数，用户不需要配）。
     private func defaultOutputURL(extension ext: String) -> URL {
-        let directory = config.captureDirectory.isEmpty
-            ? Paths.supportDir
-            : URL(fileURLWithPath: config.captureDirectory, isDirectory: true)
-        return directory.appendingPathComponent("curtain-\(Int(Date().timeIntervalSince1970)).\(ext)")
+        Paths.supportDir.appendingPathComponent("curtain-\(Int(Date().timeIntervalSince1970)).\(ext)")
     }
 
     private func recordStart(_ request: ControlRequest) -> ControlResponse {
@@ -528,12 +523,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.config = updated
                 self.shield.hidesCursor = updated.hideCursorDuringCurtain
-                self.inputGuard.allowlist = updated.allowlist
                 self.inputGuard.holdToAuthSeconds = updated.holdToAuthSeconds
                 self.audit.write("config_saved", [
                     "hold": updated.holdToAuthSeconds,
-                    "allowlist": updated.allowlist.count,
-                    "fps": updated.recordingFPS,
+                    "hide_cursor": updated.hideCursorDuringCurtain,
                 ])
             }
             settingsWindow = controller

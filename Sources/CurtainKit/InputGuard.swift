@@ -6,7 +6,6 @@ import CoreGraphics
 /// 同时负责「长按 Esc」手势，触发 Touch ID。
 public final class InputGuard {
     public private(set) var isEnabled = false
-    public var allowlist: [String] = []
     public var holdToAuthSeconds: Double = 2.0
     public var onHoldEscape: (() -> Void)?
 
@@ -14,7 +13,6 @@ public final class InputGuard {
     private var runLoopSource: CFRunLoopSource?
     private var holdWorkItem: DispatchWorkItem?
     private var escDown = false
-    private let selfPID = getpid()
 
     public init() {}
 
@@ -101,11 +99,11 @@ public final class InputGuard {
             }
         }
 
+        // 判定只看来源：PID 0 是真实硬件事件，一律吞掉；其余是合成事件（任意
+        // agent、终端、自动化工具），一律放行。不维护任何进程名单。
         let pid = Int32(event.getIntegerValueField(.eventSourceUnixProcessID))
-        if pid == 0 { return nil }                      // 硬件输入
-        if pid == selfPID { return Unmanaged.passUnretained(event) }
-        if isAllowed(pid) { return Unmanaged.passUnretained(event) }
-        return nil
+        if pid == 0 { return nil }
+        return Unmanaged.passUnretained(event)
     }
 
     private func scheduleHold() {
@@ -121,19 +119,5 @@ public final class InputGuard {
     private func cancelHold() {
         holdWorkItem?.cancel()
         holdWorkItem = nil
-    }
-
-    private func isAllowed(_ pid: Int32) -> Bool {
-        guard let app = NSRunningApplication(processIdentifier: pid) else { return false }
-        let bundle = app.bundleIdentifier ?? ""
-        let exe = app.executableURL?.path ?? ""
-        for entry in allowlist {
-            if entry.hasPrefix("/") {
-                if !exe.isEmpty && (exe == entry || exe.hasPrefix(entry)) { return true }
-            } else if entry == bundle {
-                return true
-            }
-        }
-        return false
     }
 }

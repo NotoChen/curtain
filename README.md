@@ -10,7 +10,7 @@ macOS 上的「幕帘」：**对物理世界生效的可见性开关，对采集
 
 | 需求 | 实现 |
 |---|---|
-| 防猫误触键盘 | `CGEventTap` 挂在 `kCGHIDEventTap`，把来源 PID 为 0 的**物理事件**全部吞掉；白名单进程的合成事件放行；系统超时禁用 tap 时自动重挂；指针冻结、光标隐藏 |
+| 防猫误触键盘 | `CGEventTap` 挂在 `kCGHIDEventTap`：**物理事件（来源 PID 0）一律吞掉，合成事件一律放行**——不维护任何进程名单，agent 用哪个终端都行；系统超时禁用 tap 时自动重挂；指针冻结、光标隐藏 |
 | AI 截屏/录屏不被遮挡 | 幕帘窗口 `sharingType = .none`（截图/录屏里直接消失），叠加 `SCContentFilter(display:excludingApplications:...)` 第二道保险；**按屏抓取整张桌面**，不是单窗口 |
 | 隐私（挡住人的视线） | 黑幕放在 `CGShieldingWindowLevel()`，盖住菜单栏、Dock、通知；HDMI/采集卡取的是同一帧缓冲，对外也只会是黑的 |
 
@@ -27,7 +27,7 @@ macOS 上的「幕帘」：**对物理世界生效的可见性开关，对采集
 ```
 curtaind            菜单栏常驻进程（唯一持权限的进程）
   Shield            每块屏幕一个黑窗，shielding 层级，sharingType .none
-  InputGuard        HID 事件拦截 + 白名单 + 长按 Esc 手势
+  InputGuard        HID 事件拦截（物理/合成二分）+ 长按 Esc 手势
   CaptureBroker     截图 SCScreenshotManager / 录屏 SCStream
   AuthGate          Touch ID（唯一出口）
   Sentinel          防显示器休眠 / 系统睡眠
@@ -94,14 +94,13 @@ curtainctl panic              # 应急强制撤幕，不验指纹
 
 ## 设置
 
-菜单栏 → **设置…**（⌘,）。四块：
+菜单栏 → **设置…**（⌘,）。三块：
 
-- **常规**：长按 Esc 解除的阈值（1–5 秒）、幕帘期间是否隐藏鼠标指针。
-- **采集**：默认截图目录（留空 = Application Support）、截图是否含光标、录屏默认帧率与码率。
-- **白名单**：哪些进程能在幕帘期间注入输入。可「添加…」（选 .app 自动取 bundle id，选可执行文件存绝对路径）和逐条移除。
-- **权限**：两项权限的实时状态 + 直达系统面板的按钮；底部还有「复制诊断信息」「打开审计日志」。
+- **幕帘行为**：长按 Esc 解除的阈值（1–5 秒）、幕帘期间是否隐藏鼠标指针。
+- **权限**：两项权限的实时状态 + 直达系统面板的按钮。
+- **诊断**：复制诊断信息、打开审计日志、打开配置文件。
 
-保存后立即生效，不需要重启 app。配置文件里的新字段都带默认值，老配置可以直接升级。
+保存后立即生效，不需要重启 app。截图目录/码率/帧率这些是命令行参数（`--out`、`--fps`、`--bitrate`），不进设置窗口。
 
 ## 配置文件
 
@@ -109,18 +108,13 @@ curtainctl panic              # 应急强制撤幕，不验指纹
 
 ```json
 {
-  "allowlist": [
-    "/Applications/Cua Driver.app",
-    "com.nousresearch.cua-driver",
-    "com.apple.Terminal",
-    "/usr/bin/osascript"
-  ],
   "holdToAuthSeconds": 2,
-  "safetyTimeoutSeconds": 0
+  "safetyTimeoutSeconds": 0,
+  "hideCursorDuringCurtain": true
 }
 ```
 
-- `allowlist`：`/` 开头按可执行文件路径前缀匹配，否则按 bundle id 精确匹配。只有名单里的进程能在幕帘期间注入输入。
+- 截图目录、帧率、码率是命令行参数（`--out` / `--fps` / `--bitrate`），不在配置里。
 - `safetyTimeoutSeconds`：开发兜底，秒；`0` 表示关闭（默认）。不参与产品行为。
 
 审计：`~/Library/Application Support/Curtain/audit.log`，每次入幕/撤幕/截图/录屏一行 JSON，截图带 sha256。
@@ -148,7 +142,7 @@ P1（候选，按价值排序）：
 
 1. **在场感应解锁**：iPhone/Watch 靠近自动撤幕，离开自动落幕（BLE RSSI）。
 2. **对外 API**：本地 HTTP + MCP server，让 Claude Code / Codex 等其它 agent 通过 token 走同一个采集通道（权限与审计仍集中在 curator）。
-3. **设置界面**：allowlist 编辑器、长按阈值、录制参数，替代手改 JSON。
+3. **设置界面**：更多幕帘行为选项（外观、提示音、自动升起条件）。
 4. **音频**：录屏带麦克风/系统声音。
 5. **分发**：签名 DMG + Homebrew cask（需要 Developer ID），或 GitHub Actions 出通用构建。
 6. **测试**：状态机单测 + 录制的端到端回归。
