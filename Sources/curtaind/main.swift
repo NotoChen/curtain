@@ -349,13 +349,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func menuStatus() {
-        let s = status()
+        let data = status().data ?? [:]
+        let axGranted = data["accessibility"] == "granted"
+        let screenGranted = data["screen_recording"] == "granted"
+        let permissionLine: String
+        switch (axGranted, screenGranted) {
+        case (true, true): permissionLine = "权限：均已授权"
+        case (false, false): permissionLine = "权限：两项都未授权"
+        case (false, true): permissionLine = "权限：缺少「设备控制和数据访问」"
+        case (true, false): permissionLine = "权限：缺少「录屏与系统录音」"
+        }
+
+        let lines = [
+            "幕帘：\(data["curtain"] == "on" ? "已开启" : "已关闭")",
+            permissionLine,
+            "显示器：\(data["displays"] ?? "?") 块",
+            "录屏：\(data["recording"] == "yes" ? "正在录制" : "未在录制")",
+            "可注入输入的进程：\(data["allowlist"] ?? "?") 个",
+            "长按 Esc 解除：\(data["hold_to_auth"] ?? "?")",
+        ]
+
         let alert = NSAlert()
-        alert.messageText = s.message
-        alert.informativeText = (s.data ?? [:]).sorted { $0.key < $1.key }
-            .map { "\($0.key): \($0.value)" }.joined(separator: "\n")
+        alert.messageText = "Curtain 运行状态"
+        alert.informativeText = lines.joined(separator: "\n")
         alert.addButton(withTitle: "好")
-        alert.runModal()
+        alert.addButton(withTitle: "复制诊断信息")
+        if alert.runModal() == .alertSecondButtonReturn {
+            let raw = data.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(raw, forType: .string)
+        }
     }
 
     @objc private func menuQuit() {
