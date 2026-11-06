@@ -6,6 +6,8 @@ import CoreGraphics
 public final class Shield {
     private var windows: [NSWindow] = []
     public private(set) var isUp = false
+    /// 幕帘期间是否隐藏鼠标指针（设置里可关）。
+    public var hidesCursor = true
 
     private let shieldingLevel = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
     /// 认证面板要显示在幕帘之上：降到普通层级，让系统面板（更高层级）浮出来。
@@ -18,7 +20,7 @@ public final class Shield {
         guard !isUp else { return }
         build()
         isUp = true
-        CGDisplayHideCursor(CGMainDisplayID())
+        if hidesCursor { CGDisplayHideCursor(CGMainDisplayID()) }
     }
 
     public func lower() {

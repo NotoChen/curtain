@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var authPending = false
     private var safetyItem: DispatchWorkItem?
     private var permissionWindow: PermissionWindowController?
+    private var settingsWindow: SettingsWindowController?
     private var singleInstance: SingleInstance?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -46,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         singleInstance = instance
 
         shield = Shield()
+        shield.hidesCursor = config.hideCursorDuringCurtain
         inputGuard = InputGuard()
         inputGuard.allowlist = config.allowlist
         inputGuard.holdToAuthSeconds = config.holdToAuthSeconds
@@ -175,7 +177,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let options = captureOptions(request)
         do {
             if request.allDisplays == true {
-                let dir = request.out.map { URL(fileURLWithPath: $0).deletingLastPathComponent() } ?? Paths.supportDir
+                let fallback = defaultOutputURL(extension: "png").deletingLastPathComponent()
+                let dir = request.out.map { URL(fileURLWithPath: $0).deletingLastPathComponent() } ?? fallback
                 let base = request.out.map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent }
                     ?? "shot-\(Int(Date().timeIntervalSince1970))"
                 let results = try broker.screenshotAllDisplays(to: dir, baseName: base, options: options)
@@ -187,8 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ])
             }
 
-            let out = request.out ?? Paths.supportDir
-                .appendingPathComponent("shot-\(Int(Date().timeIntervalSince1970)).png").path
+            let out = request.out ?? defaultOutputURL(extension: "png").path
             let result = try broker.screenshot(to: URL(fileURLWithPath: out),
                                                displayIndex: request.display ?? 0,
                                                options: options)
@@ -222,17 +224,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         return CaptureOptions(
-            cursor: request.cursor ?? false,
+            cursor: request.cursor ?? config.captureCursor,
             region: region,
-            fps: max(1, min(request.fps ?? 30, 60)),
-            bitrate: max(0, request.bitrate ?? 0)
+            fps: max(1, min(request.fps ?? config.recordingFPS, 60)),
+            bitrate: max(0, request.bitrate ?? config.recordingBitrate)
         )
+    }
+
+    /// 默认输出位置：设置里指定的目录，否则 Application Support。
+    private func defaultOutputURL(extension ext: String) -> URL {
+        let directory = config.captureDirectory.isEmpty
+            ? Paths.supportDir
+            : URL(fileURLWithPath: config.captureDirectory, isDirectory: true)
+        return directory.appendingPathComponent("curtain-\(Int(Date().timeIntervalSince1970)).\(ext)")
     }
 
     private func recordStart(_ request: ControlRequest) -> ControlResponse {
         guard !recorder.isRecording else { return .failure("已经在录制") }
-        let out = request.out ?? Paths.supportDir
-            .appendingPathComponent("rec-\(Int(Date().timeIntervalSince1970)).mp4").path
+        let out = request.out ?? defaultOutputURL(extension: "mp4").path
         let options = captureOptions(request)
         do {
             try broker.startRecording(recorder, to: URL(fileURLWithPath: out),
@@ -459,6 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "结束录制", action: #selector(menuStopRecording), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "权限状态…", action: #selector(menuPermissions), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "设置…", action: #selector(menuSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "状态", action: #selector(menuStatus), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 Curtain", action: #selector(menuQuit), keyEquivalent: "q"))
@@ -504,6 +514,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func menuPermissions() {
         DispatchQueue.main.async { [weak self] in self?.showPermissionGuide() }
+    }
+
+    @objc private func menuSettings() {
+        DispatchQueue.main.async { [weak self] in self?.showSettings() }
+    }
+
+    /// 设置窗口：保存后立即生效（不必重启 app）。
+    private func showSettings() {
+        if settingsWindow == nil {
+            let controller = SettingsWindowController(config: config)
+            controller.onSave = { [weak self] updated in
+                guard let self else { return }
+                self.config = updated
+                self.shield.hidesCursor = updated.hideCursorDuringCurtain
+                self.inputGuard.allowlist = updated.allowlist
+                self.inputGuard.holdToAuthSeconds = updated.holdToAuthSeconds
+                self.audit.write("config_saved", [
+                    "hold": updated.holdToAuthSeconds,
+                    "allowlist": updated.allowlist.count,
+                    "fps": updated.recordingFPS,
+                ])
+            }
+            settingsWindow = controller
+        }
+        settingsWindow?.show()
     }
 
     @objc private func menuStopRecording() {
