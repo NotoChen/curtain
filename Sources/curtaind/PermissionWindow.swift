@@ -58,7 +58,7 @@ final class PermissionWindowController: NSWindowController {
         title.font = .systemFont(ofSize: 16, weight: .semibold)
         stack.addArrangedSubview(title)
 
-        let subtitle = NSTextField(labelWithString: "点右侧按钮会直接打开系统设置里对应的面板。macOS 26 起「辅助功能」并入了「设备控制和数据访问」，勾选 Curtain.app 即可；列表里没有它时，点面板下方的 + 选择 /Applications/Curtain.app。勾上后这里会自动变绿。")
+        let subtitle = NSTextField(labelWithString: "点右侧「打开设置」会直接跳到系统设置里对应的面板，在两个列表里分别勾选 Curtain.app 即可。勾上后这里会自动变绿。")
         subtitle.font = .systemFont(ofSize: 12)
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byWordWrapping
@@ -68,15 +68,15 @@ final class PermissionWindowController: NSWindowController {
 
         stack.addArrangedSubview(makeRow(
             key: "ax",
-            title: "设备控制和数据访问（原「辅助功能」）",
-            detail: "拦截键盘鼠标（防误触）、长按 Esc 触发 Touch ID。macOS 26 起这个面板同时管录屏与控制权限。",
+            title: "设备控制和数据访问",
+            detail: "拦截键盘鼠标（防误触）、长按 Esc 触发 Touch ID。在列表里勾选 Curtain.app。",
             action: #selector(openAccessibility)
         ))
 
         stack.addArrangedSubview(makeRow(
             key: "screen",
-            title: "屏幕录制",
-            detail: "截取完整桌面、录制屏幕；画面里不会包含幕帘本身。",
+            title: "录屏与系统录音",
+            detail: "截图与录屏。列表里没有 Curtain.app 时，点面板下方 + 选择 /Applications/Curtain.app。",
             action: #selector(openScreenRecording)
         ))
 
@@ -170,11 +170,14 @@ final class PermissionWindowController: NSWindowController {
     }
 
     @objc private func openAccessibility() {
+        // 先让系统把 Curtain.app 加进列表（必要时它会弹一次确认），再跳面板。
+        Permissions.promptAccessibility()
         Permissions.openAccessibilitySettings()
         startPolling()
     }
 
     @objc private func openScreenRecording() {
+        _ = Permissions.promptScreenRecording()
         Permissions.openScreenRecordingSettings()
         startPolling()
     }

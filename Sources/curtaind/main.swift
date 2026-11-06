@@ -81,14 +81,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 启动就申请辅助功能权限：没有它事件拦截建不起来，提前弹系统提示，
-    /// 而不是等用户点「开启幕帘」才失败。
+    /// 启动时只做状态检查，不弹系统框：真正申请放到用户点「打开设置」时，
+    /// 那时系统会把 Curtain.app 加进对应列表，少一次莫名其妙的弹窗。
     private func preflightAccessibility() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        let trusted = AXIsProcessTrustedWithOptions(options)
-        audit.write("accessibility_check", ["trusted": trusted])
+        let trusted = Permissions.hasAccessibility()
+        let screen = Permissions.hasScreenRecording()
+        audit.write("accessibility_check", ["trusted": trusted, "screen": screen])
         if !trusted {
-            NSLog("Curtain: Accessibility 未授权，事件拦截将无法启动")
+            NSLog("Curtain: 设备控制和数据访问 未授权")
+        }
+        if !screen {
+            NSLog("Curtain: 录屏与系统录音 未授权")
         }
     }
 
