@@ -1,5 +1,8 @@
 # Curtain
 
+[![CI](https://github.com/NotoChen/curtain/actions/workflows/ci.yml/badge.svg)](https://github.com/NotoChen/curtain/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/NotoChen/curtain?display_name=tag)](https://github.com/NotoChen/curtain/releases)
+
 macOS 上的「幕帘」：**对物理世界生效的可见性开关，对 framebuffer 采集透明**。
 
 屏幕在物理上是统一纯色（默认黑色）、键盘鼠标被锁住，但持有权限的 AI agent 仍然可以截取完整桌面、录制屏幕、合成点击——画面里没有幕帘，也不会有锁屏界面。
