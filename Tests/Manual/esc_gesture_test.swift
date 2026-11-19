@@ -9,7 +9,6 @@ import Foundation
 
 let guarder = InputGuard()
 guarder.holdToAuthSeconds = 0.6
-guarder.allowlist = []
 
 var fired = 0
 guarder.onHoldEscape = {

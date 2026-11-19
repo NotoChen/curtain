@@ -21,7 +21,7 @@ public final class SingleInstance {
             return false
         }
         let pid = "\(getpid())\n"
-        _ = pid.withCString { ftruncate(fd, 0); write(fd, $0, strlen($0)) }
+        pid.withCString { ftruncate(fd, 0); write(fd, $0, strlen($0)) }
         return true
     }
 

@@ -5,15 +5,18 @@ func usage() -> Never {
     print("""
     curtainctl — 控制 Curtain 幕帘
 
-      curtainctl on                            升起幕帘（黑屏 + 拦截物理输入）
-      curtainctl off                           请求解除（长按 Esc 或走 Touch ID）
+      curtainctl on [--minutes N]              升起幕帘（纯色 + 拦截物理输入）
+      curtainctl protect [--minutes N]         同 on；并设置本次保护时长
+      curtainctl scene <away|meeting|guest|focus> [--minutes N]
+                                               使用场景预设起幕
+      curtainctl off                           请求解除（双击 Esc / 快捷键 → Touch ID）
       curtainctl panic                         应急强制撤幕（不验指纹，需本地 shell）
-      curtainctl status                        查看状态（JSON）
-      curtainctl doctor                        自检：权限 / 屏 / tap / 审计链 / 自启
+      curtainctl status                        查看状态（JSON，含真实调用方）
+      curtainctl doctor                        自检：权限 / 屏 / gamma 纯色 / tap / 审计链 / 自启
 
-      curtainctl capture [--out PATH] [--display N] [--all] [--cursor] [--region x,y,w,h]
+      curtainctl capture [--out PATH] [--display N | --display-id ID] [--all] [--cursor] [--region x,y,w,h] [--client NAME]
                                                截取桌面（画面中不含幕帘）；--all 每屏一张
-      curtainctl record start [--out PATH] [--display N] [--fps 30] [--bitrate 8000000]
+      curtainctl record start [--out PATH] [--display N | --display-id ID] [--fps 30] [--bitrate 8000000] [--client NAME]
       curtainctl record stop
 
       curtainctl audit [N]                     最近 N 条审计（默认 20）
@@ -31,6 +34,9 @@ func usage() -> Never {
 var args = Array(CommandLine.arguments.dropFirst())
 guard let command = args.first else { usage() }
 args.removeFirst()
+if command == "help" || args.contains("--help") || args.contains("-h") {
+    usage()
+}
 
 func value(for flag: String) -> String? {
     guard let index = args.firstIndex(of: flag), args.index(after: index) < args.endIndex else { return nil }
@@ -38,6 +44,21 @@ func value(for flag: String) -> String? {
 }
 
 func hasFlag(_ flag: String) -> Bool { args.contains(flag) }
+
+func minutesValue() -> Int? {
+    guard hasFlag("--minutes") else { return nil }
+    guard let raw = value(for: "--minutes") else {
+        FileHandle.standardError.write(Data("--minutes 需要一个整数\n".utf8))
+        exit(1)
+    }
+    guard let minutes = Int(raw), (0...1440).contains(minutes) else {
+        FileHandle.standardError.write(
+            Data("--minutes 必须是 0–1440 的整数\n".utf8)
+        )
+        exit(1)
+    }
+    return minutes
+}
 
 func daemonPath() -> String {
     let installed = "/Applications/Curtain.app/Contents/MacOS/curtaind"
@@ -86,7 +107,28 @@ default:
 let request: ControlRequest
 switch command {
 case "on":
-    request = ControlRequest(cmd: "on")
+    request = ControlRequest(
+        cmd: "on",
+        minutes: minutesValue()
+    )
+case "protect":
+    request = ControlRequest(
+        cmd: "protect",
+        minutes: minutesValue()
+    )
+case "scene":
+    guard let raw = args.first,
+          let scene = CurtainScene(rawValue: raw) else {
+        FileHandle.standardError.write(
+            Data("场景必须是 away、meeting、guest 或 focus\n".utf8)
+        )
+        exit(1)
+    }
+    request = ControlRequest(
+        cmd: "scene",
+        minutes: minutesValue(),
+        scene: scene.rawValue
+    )
 case "off":
     request = ControlRequest(cmd: "off")
 case "status":
@@ -98,23 +140,29 @@ case "panic":
 case "capture":
     let displayArg = value(for: "--display")
     let all = hasFlag("--all") || displayArg == "all"
+    let client = value(for: "--client") ?? ProcessInfo.processInfo.environment["CURTAIN_CLIENT"]
     request = ControlRequest(
         cmd: "capture",
         out: value(for: "--out"),
         display: displayArg.flatMap(Int.init),
+        displayID: value(for: "--display-id").flatMap(UInt32.init),
         cursor: hasFlag("--cursor"),
         region: value(for: "--region"),
-        allDisplays: all
+        allDisplays: all,
+        client: client
     )
 case "record":
     guard let action = args.first else { usage() }
     if action == "start" {
+        let client = value(for: "--client") ?? ProcessInfo.processInfo.environment["CURTAIN_CLIENT"]
         request = ControlRequest(
             cmd: "record_start",
             out: value(for: "--out"),
             display: value(for: "--display").flatMap(Int.init),
+            displayID: value(for: "--display-id").flatMap(UInt32.init),
             fps: value(for: "--fps").flatMap(Int.init),
-            bitrate: value(for: "--bitrate").flatMap(Int.init)
+            bitrate: value(for: "--bitrate").flatMap(Int.init),
+            client: client
         )
     } else if action == "stop" {
         request = ControlRequest(cmd: "record_stop")
@@ -122,7 +170,16 @@ case "record":
         usage()
     }
 case "audit":
-    let count = args.first.flatMap(Int.init) ?? 20
+    let count: Int
+    if let raw = args.first {
+        guard let parsed = Int(raw), parsed > 0, parsed <= 10_000 else {
+            FileHandle.standardError.write(Data("审计条数必须在 1–10000 之间\n".utf8))
+            exit(1)
+        }
+        count = parsed
+    } else {
+        count = 20
+    }
     request = ControlRequest(cmd: "audit", display: count)
 case "-h", "--help", "help":
     usage()

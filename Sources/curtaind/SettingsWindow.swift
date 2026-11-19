@@ -1,236 +1,556 @@
 import AppKit
 import CurtainKit
 
-/// 设置窗口：只放用户真的会调的东西。
-/// 幕帘行为（长按阈值、隐藏光标）+ 权限状态 + 诊断入口。
-/// 截图目录、码率、白名单这些不属于用户设置，一律不进这个窗口。
-final class SettingsWindowController: NSWindowController {
+final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var onSave: ((CurtainConfig) -> Void)?
+    var onOpenPermissions: (() -> Void)?
+    var onPreviewPresentation: ((PresentationPreviewConfiguration) -> Void)?
 
-    private var config: CurtainConfig
-    private let holdField = NSTextField(string: "")
-    private let hideCursorSwitch = NSButton(checkboxWithTitle: "幕帘期间隐藏鼠标指针", target: nil, action: nil)
-    private let permissionLabel = NSTextField(labelWithString: "")
+    var config: CurtainConfig
+    var selectedPage: SettingsPage = .general
+    var pages: [SettingsPage: NSView] = [:]
+    var navRows: [SettingsPage: CurtainNavRow] = [:]
+    var permissionTimer: Timer?
+    var dirtyTimer: Timer?
+    var keyboardMonitor: Any?
+    var hasLoadedValues = false
+    var hasAccessibility = Permissions.hasAccessibility()
+    var hasScreenRecording = Permissions.hasScreenRecording()
+    var presentationImagePath = ""
+
+    let headerTitle = NSTextField(labelWithString: "")
+    let headerSubtitle = NSTextField(labelWithString: "")
+    let headerPill = CurtainStatusPillView(text: "未完成", color: CurtainTheme.danger)
+    let sidebarPill = CurtainStatusPillView(text: "需要授权", color: CurtainTheme.warning)
+    let pageHost = NSView()
+    let scrollView = NSScrollView()
+    let footerNote = NSTextField(
+        labelWithString: "保存后立即生效，不需要重开 Curtain。"
+    )
+    let cancelButton = CurtainButton(
+        title: "取消",
+        style: .secondary,
+        target: nil,
+        action: nil
+    )
+    let saveButton = CurtainButton(
+        title: "保存",
+        style: .primary,
+        target: nil,
+        action: nil
+    )
+
+    let doubleField = CurtainNumberField(
+        value: 0.7,
+        suffix: "秒",
+        range: 0.3...1.5
+    )
+    let holdField = CurtainNumberField(
+        value: 2.0,
+        suffix: "秒",
+        range: 1...5
+    )
+    let colorWell = NSColorWell()
+    let hideCursorSwitch = NSSwitch()
+    let clamshellSwitch = NSSwitch()
+    let idleSwitch = NSSwitch()
+    let idleMinutesField = CurtainNumberField(
+        value: 10,
+        suffix: "分钟",
+        range: 1...1440,
+        decimalPlaces: 0
+    )
+    let scheduleSwitch = NSSwitch()
+    let scheduleStartPicker = NSDatePicker()
+    let scheduleEndPicker = NSDatePicker()
+    let scheduleAutoExitSwitch = NSSwitch()
+    let protectionMinutesField = CurtainNumberField(
+        value: 0,
+        suffix: "分钟",
+        range: 0...1440,
+        decimalPlaces: 0
+    )
+    var sceneProfiles: [CurtainScene: CurtainSceneProfile] = Dictionary(
+        uniqueKeysWithValues: CurtainScene.allCases.map {
+            ($0, $0.defaultProfile)
+        }
+    )
+    var sceneHotkeys: [CurtainScene: SceneHotkey] = [:]
+    var selectedScene: CurtainScene = .away
+    let sceneSelector = NSSegmentedControl()
+    let sceneDetailLabel = NSTextField(labelWithString: "")
+    let sceneResetButton = CurtainButton(
+        title: "恢复默认",
+        style: .secondary,
+        target: nil,
+        action: nil
+    )
+    let sceneMinuteField = CurtainNumberField(
+        value: 120,
+        suffix: "分钟",
+        range: 0...1440,
+        decimalPlaces: 0
+    )
+    let scenePresentationPopup = NSPopUpButton()
+    let sceneClockPopup = NSPopUpButton()
+    let sceneImageLabel = NSTextField(labelWithString: "跟随全局背景")
+    let sceneImageButton = CurtainButton(
+        title: "选择图片…",
+        style: .secondary,
+        target: nil,
+        action: nil
+    )
+    let sceneImageClearButton = CurtainButton(
+        title: "跟随全局",
+        style: .secondary,
+        target: nil,
+        action: nil
+    )
+    let sceneMessageField = NSTextField()
+    let sceneReturnSwitch = NSSwitch()
+    let sceneMainRolePopup = NSPopUpButton()
+    let sceneSecondaryRolePopup = NSPopUpButton()
+    let scenePreview = CurtainPresentationPreviewView()
+    var weekdayButtons: [NSButton] = []
+    let presentationSwitch = NSSwitch()
+    let presentationImageLabel = NSTextField(labelWithString: "纯色背景")
+    let presentationPreview = CurtainPresentationPreviewView()
+    let clockStylePicker = ClockStylePickerView()
+    let mainRolePopup = NSPopUpButton()
+    let secondaryRolePopup = NSPopUpButton()
+    let focusXField = CurtainSliderField(
+        minimum: 0,
+        maximum: 1,
+        value: 0.5,
+        width: 180,
+        sliderWidth: 122,
+        formatter: { String(format: "%.0f%%", $0 * 100) }
+    )
+    let focusYField = CurtainSliderField(
+        minimum: 0,
+        maximum: 1,
+        value: 0.5,
+        width: 180,
+        sliderWidth: 122,
+        formatter: { String(format: "%.0f%%", $0 * 100) }
+    )
+    let zoomField = CurtainSliderField(
+        minimum: 1,
+        maximum: 2,
+        value: 1,
+        width: 180,
+        sliderWidth: 122,
+        formatter: { String(format: "%.2f×", $0) }
+    )
+    let dimField = CurtainSliderField(
+        minimum: 0,
+        maximum: 0.8,
+        value: 0,
+        width: 180,
+        sliderWidth: 122,
+        formatter: { String(format: "%.0f%%", $0 * 100) }
+    )
+    let previewPresentationButton = CurtainButton(
+        title: "全屏试看",
+        symbol: "play.rectangle.fill",
+        style: .primary,
+        target: nil,
+        action: nil
+    )
+    let presentationImageButton = CurtainButton(
+        title: "选择图片…",
+        style: .secondary,
+        target: nil,
+        action: nil
+    )
+    let presentationClearButton = CurtainButton(
+        title: "清除",
+        style: .secondary,
+        target: nil,
+        action: nil
+    )
+    let accessibilityRow = PermissionStateRowView(
+        symbol: "keyboard",
+        title: "设备控制和数据访问",
+        detail: "拦截物理键盘鼠标、识别 Esc 手势，并保护幕帘期间的输入边界。",
+        granted: false
+    )
+    let screenRecordingRow = PermissionStateRowView(
+        symbol: "rectangle.dashed.badge.record",
+        title: "录屏与系统录音",
+        detail: "供 Agent 通过 curtainctl 截图和录屏，普通调用方不会直接获得权限。",
+        granted: false
+    )
+    let permissionActionButton = CurtainButton(
+        title: "打开系统设置",
+        symbol: "gearshape",
+        style: .primary,
+        target: nil,
+        action: nil
+    )
+    let diagnosticsHotkeyValue = NSTextField(labelWithString: "")
+    let diagnosticsModeValue = NSTextField(labelWithString: "")
+
+    var numberFields: [CurtainNumberField] {
+        [
+            doubleField,
+            holdField,
+            idleMinutesField,
+            protectionMinutesField,
+            sceneMinuteField,
+        ]
+    }
+
+    lazy var hotkeyButton = HotkeyRecorderButton(
+        binding: HotkeyBinding(
+            keyCode: config.hotkeyKeyCode,
+            modifiers: CGEventFlags(rawValue: config.hotkeyModifiers)
+        )
+    )
+    lazy var sceneHotkeyButton = HotkeyRecorderButton(
+        binding: config.sceneHotkey(for: .away).binding
+    )
 
     init(config: CurtainConfig) {
         self.config = config
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 340),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 940, height: 820),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        window.title = "Curtain 设置"
-        window.isReleasedWhenClosed = false
-        window.center()
+        CurtainWindowChrome.apply(to: window, title: "Curtain 设置")
+        window.minSize = NSSize(width: 820, height: 620)
+        CurtainWindowChrome.centerOnActiveScreen(window)
         super.init(window: window)
+        window.delegate = self
         buildUI()
-        loadValues()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
     func show() {
+        if !hasLoadedValues {
+            loadValues()
+            hasLoadedValues = true
+        }
         refreshPermissions()
+        startPermissionPolling()
+        startDirtyTracking()
+        startKeyboardMonitor()
+        if let window {
+            CurtainWindowChrome.centerOnActiveScreen(window)
+        }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    // MARK: - UI
+    func hide() {
+        dismissWindow()
+    }
+
+#if DEBUG
+    func previewSelectPage(_ index: Int) {
+        let pages = SettingsPage.allCases
+        guard pages.indices.contains(index) else { return }
+        select(pages[index])
+    }
+
+    func previewSelectScene(_ scene: CurtainScene) {
+        selectedScene = scene
+        loadSelectedScene()
+    }
+
+    func previewSetDirty() {
+        doubleField.value += 0.1
+        updateDirtyState()
+    }
+#endif
+
+    func windowWillClose(_ notification: Notification) {
+        stopPermissionPolling()
+        stopDirtyTracking()
+        stopKeyboardMonitor()
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        requestClose()
+        return false
+    }
+
+    func requestClose() {
+        guard hasUnsavedChanges else {
+            dismissWindow()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "保存对设置的更改？"
+        alert.informativeText = "不保存会丢失当前修改。"
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "不保存")
+        alert.addButton(withTitle: "取消")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            if persistChanges() {
+                dismissWindow()
+            }
+        case .alertSecondButtonReturn:
+            loadValues()
+            dismissWindow()
+        default:
+            break
+        }
+    }
+
+    deinit {
+        stopPermissionPolling()
+        stopDirtyTracking()
+        stopKeyboardMonitor()
+    }
 
     private func buildUI() {
         guard let window else { return }
+        let root = NSView()
+        root.wantsLayer = true
+        root.addSubview(CurtainBackdropView())
+        root.subviews[0].translatesAutoresizingMaskIntoConstraints = false
 
-        let content = NSStackView()
-        content.orientation = .vertical
-        content.alignment = .leading
-        content.spacing = 14
-        content.edgeInsets = NSEdgeInsets(top: 20, left: 22, bottom: 20, right: 22)
+        let sidebar = buildSidebar()
+        root.addSubview(sidebar)
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
 
-        content.addArrangedSubview(sectionTitle("幕帘"))
+        let sidebarDivider = NSView()
+        sidebarDivider.wantsLayer = true
+        sidebarDivider.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        root.addSubview(sidebarDivider)
+        sidebarDivider.translatesAutoresizingMaskIntoConstraints = false
 
-        holdField.alignment = .right
-        holdField.widthAnchor.constraint(equalToConstant: 64).isActive = true
-        holdField.placeholderString = "2.0"
-        content.addArrangedSubview(row("长按 Esc 解除：", control: holdField, suffix: "秒（1–5）"))
+        let detail = buildDetail()
+        root.addSubview(detail)
+        detail.translatesAutoresizingMaskIntoConstraints = false
 
-        hideCursorSwitch.target = self
-        content.addArrangedSubview(indented(hideCursorSwitch))
-
-        content.addArrangedSubview(separator())
-        content.addArrangedSubview(sectionTitle("权限"))
-
-        permissionLabel.font = .systemFont(ofSize: 12)
-        permissionLabel.textColor = .secondaryLabelColor
-        permissionLabel.maximumNumberOfLines = 2
-        permissionLabel.lineBreakMode = .byWordWrapping
-        content.addArrangedSubview(indented(permissionLabel))
-
-        let permissionButtons = NSStackView()
-        permissionButtons.orientation = .horizontal
-        permissionButtons.spacing = 12
-        let openAX = NSButton(title: "设备控制和数据访问", target: self, action: #selector(openAccessibility))
-        openAX.bezelStyle = .rounded
-        let openSC = NSButton(title: "录屏与系统录音", target: self, action: #selector(openScreenRecording))
-        openSC.bezelStyle = .rounded
-        permissionButtons.addArrangedSubview(openAX)
-        permissionButtons.addArrangedSubview(openSC)
-        content.addArrangedSubview(indented(permissionButtons))
-
-        content.addArrangedSubview(separator())
-        content.addArrangedSubview(sectionTitle("诊断"))
-
-        let diagnostics = NSStackView()
-        diagnostics.orientation = .horizontal
-        diagnostics.spacing = 12
-        let copyDoctor = NSButton(title: "复制诊断信息", target: self, action: #selector(copyDiagnostics))
-        copyDoctor.bezelStyle = .rounded
-        let openAudit = NSButton(title: "打开审计日志", target: self, action: #selector(openAuditLog))
-        openAudit.bezelStyle = .rounded
-        let openConfig = NSButton(title: "打开配置文件", target: self, action: #selector(openConfigFile))
-        openConfig.bezelStyle = .rounded
-        diagnostics.addArrangedSubview(copyDoctor)
-        diagnostics.addArrangedSubview(openAudit)
-        diagnostics.addArrangedSubview(openConfig)
-        content.addArrangedSubview(indented(diagnostics))
-
-        content.addArrangedSubview(separator())
-
-        let actions = NSStackView()
-        actions.orientation = .horizontal
-        actions.spacing = 10
-        actions.widthAnchor.constraint(equalToConstant: 476).isActive = true
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        actions.addArrangedSubview(spacer)
-        let cancel = NSButton(title: "取消", target: self, action: #selector(cancelClicked))
-        cancel.bezelStyle = .rounded
-        cancel.keyEquivalent = "\u{1b}"
-        let save = NSButton(title: "保存", target: self, action: #selector(saveClicked))
-        save.bezelStyle = .rounded
-        save.keyEquivalent = "\r"
-        actions.addArrangedSubview(cancel)
-        actions.addArrangedSubview(save)
-        content.addArrangedSubview(actions)
-
-        let container = NSView()
-        container.addSubview(content)
-        content.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            content.topAnchor.constraint(equalTo: container.topAnchor),
-            content.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor),
+            root.subviews[0].leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            root.subviews[0].trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            root.subviews[0].topAnchor.constraint(equalTo: root.topAnchor),
+            root.subviews[0].bottomAnchor.constraint(equalTo: root.bottomAnchor),
+
+            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            sidebar.topAnchor.constraint(equalTo: root.topAnchor),
+            sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            sidebar.widthAnchor.constraint(equalToConstant: 210),
+
+            sidebarDivider.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            sidebarDivider.topAnchor.constraint(equalTo: root.topAnchor),
+            sidebarDivider.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            sidebarDivider.widthAnchor.constraint(equalToConstant: 0.7),
+
+            detail.leadingAnchor.constraint(equalTo: sidebarDivider.trailingAnchor),
+            detail.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            detail.topAnchor.constraint(equalTo: root.topAnchor),
+            detail.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
-        window.contentView = container
-    }
 
-    private func sectionTitle(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
-        return label
-    }
-
-    private func row(_ title: String, control: NSView, suffix: String) -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.alignment = .firstBaseline
-        stack.spacing = 8
-
-        let label = NSTextField(labelWithString: title)
-        label.widthAnchor.constraint(equalToConstant: 118).isActive = true
-        stack.addArrangedSubview(label)
-        stack.addArrangedSubview(control)
-
-        if !suffix.isEmpty {
-            let suffixLabel = NSTextField(labelWithString: suffix)
-            suffixLabel.textColor = .secondaryLabelColor
-            suffixLabel.font = .systemFont(ofSize: 11)
-            stack.addArrangedSubview(suffixLabel)
-        }
-        return stack
-    }
-
-    private func indented(_ view: NSView) -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.spacing = 0
-        let spacer = NSView()
-        spacer.widthAnchor.constraint(equalToConstant: 118).isActive = true
-        stack.addArrangedSubview(spacer)
-        stack.addArrangedSubview(view)
-        return stack
-    }
-
-    private func separator() -> NSView {
-        let line = NSBox()
-        line.boxType = .separator
-        line.widthAnchor.constraint(equalToConstant: 470).isActive = true
-        return line
-    }
-
-    // MARK: - 值
-
-    private func loadValues() {
-        holdField.stringValue = String(format: "%.1f", config.holdToAuthSeconds)
-        hideCursorSwitch.state = config.hideCursorDuringCurtain ? .on : .off
-        refreshPermissions()
-    }
-
-    func refreshPermissions() {
-        let ax = Permissions.hasAccessibility() ? "已授权" : "未授权"
-        let screen = Permissions.hasScreenRecording() ? "已授权" : "未授权"
-        permissionLabel.stringValue = "设备控制和数据访问：\(ax)\n录屏与系统录音：\(screen)"
-    }
-
-    // MARK: - 动作
-
-    @objc private func openAccessibility() {
-        Permissions.promptAccessibility()
-        Permissions.openAccessibilitySettings()
-    }
-
-    @objc private func openScreenRecording() {
-        _ = Permissions.promptScreenRecording()
-        Permissions.openScreenRecordingSettings()
-    }
-
-    @objc private func copyDiagnostics() {
-        let lines = [
-            "accessibility: \(Permissions.hasAccessibility() ? "granted" : "missing")",
-            "screen_recording: \(Permissions.hasScreenRecording() ? "granted" : "missing")",
-            "displays: \(NSScreen.screens.count)",
-            "hold_to_auth: \(config.holdToAuthSeconds)",
-            "hide_cursor: \(config.hideCursorDuringCurtain)",
-            "version: \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev")",
-            "config: \(Paths.configURL.path)",
+        pages = [
+            .general: makeGeneralPage(),
+            .automation: makeAutomationPage(),
+            .scenes: makeScenesPage(),
+            .presentation: makePresentationPage(),
+            .permissions: makePermissionPage(),
+            .diagnostics: makeDiagnosticsPage(),
         ]
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+        window.contentView = root
+        for field in numberFields where field !== sceneMinuteField {
+            field.onChange = { [weak self] in
+                self?.updateDirtyState()
+            }
+        }
+        select(.general)
     }
 
-    @objc private func openAuditLog() {
-        NSWorkspace.shared.open(Paths.auditURL)
+    private func buildSidebar() -> NSView {
+        let sidebar = NSVisualEffectView()
+        sidebar.material = .sidebar
+        sidebar.blendingMode = .withinWindow
+        sidebar.state = .followsWindowActiveState
+
+        let icon = CurtainBrandIconView(size: 38)
+        let name = NSTextField(labelWithString: "CURTAIN")
+        name.font = .systemFont(ofSize: 13, weight: .bold)
+        name.attributedStringValue = NSAttributedString(
+            string: "CURTAIN",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 13, weight: .bold),
+                .kern: 1.4,
+                .foregroundColor: CurtainTheme.ink,
+            ]
+        )
+        let subtitle = NSTextField(labelWithString: "可见性开关")
+        subtitle.font = .systemFont(ofSize: 10)
+        subtitle.textColor = CurtainTheme.secondaryInk
+        let brandText = CurtainTheme.stack([name, subtitle], spacing: 1)
+        let brand = CurtainTheme.stack(
+            [icon, brandText],
+            orientation: .horizontal,
+            spacing: 13,
+            alignment: .centerY
+        )
+
+        let nav = NSStackView()
+        nav.orientation = .vertical
+        nav.spacing = 5
+        nav.alignment = .leading
+        nav.translatesAutoresizingMaskIntoConstraints = false
+        for page in SettingsPage.allCases {
+            let row = CurtainNavRow(symbol: page.symbol, title: page.title)
+            row.onClick = { [weak self] in self?.select(page) }
+            navRows[page] = row
+            nav.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: nav.widthAnchor).isActive = true
+        }
+        for (index, page) in SettingsPage.allCases.enumerated() {
+            navRows[page]?.toolTip = "\(page.title)（⌘\(index + 1)）"
+        }
+
+        let version = NSTextField(labelWithString: "Curtain \(Self.version)")
+        version.font = .monospacedSystemFont(ofSize: 9.5, weight: .regular)
+        version.textColor = CurtainTheme.tertiaryInk
+        let footer = CurtainTheme.stack([sidebarPill, version], spacing: 10)
+
+        sidebar.addSubview(brand)
+        sidebar.addSubview(nav)
+        sidebar.addSubview(footer)
+        brand.translatesAutoresizingMaskIntoConstraints = false
+        footer.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            brand.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 22),
+            brand.trailingAnchor.constraint(lessThanOrEqualTo: sidebar.trailingAnchor, constant: -16),
+            brand.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 46),
+
+            nav.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 14),
+            nav.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -14),
+            nav.topAnchor.constraint(equalTo: brand.bottomAnchor, constant: 30),
+
+            footer.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 22),
+            footer.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor, constant: -24),
+        ])
+        return sidebar
     }
 
-    @objc private func openConfigFile() {
-        NSWorkspace.shared.open(Paths.configURL)
+    private func buildDetail() -> NSView {
+        let detail = NSView()
+
+        headerTitle.font = .systemFont(ofSize: 22, weight: .semibold)
+        headerTitle.textColor = CurtainTheme.ink
+        headerSubtitle.font = .systemFont(ofSize: 11.5)
+        headerSubtitle.textColor = CurtainTheme.secondaryInk
+        headerSubtitle.maximumNumberOfLines = 2
+        headerSubtitle.lineBreakMode = .byWordWrapping
+        let headerText = CurtainTheme.stack([headerTitle, headerSubtitle], spacing: 4)
+
+        detail.addSubview(headerText)
+        detail.addSubview(headerPill)
+        detail.addSubview(scrollView)
+        headerText.translatesAutoresizingMaskIntoConstraints = false
+        headerPill.translatesAutoresizingMaskIntoConstraints = false
+
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let document = FlippedView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(pageHost)
+        pageHost.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = document
+
+        let footerDivider = CurtainDividerView()
+        footerNote.font = .systemFont(ofSize: 9.5)
+        footerNote.textColor = CurtainTheme.tertiaryInk
+        footerNote.lineBreakMode = .byTruncatingTail
+        cancelButton.target = self
+        cancelButton.action = #selector(cancelClicked)
+        cancelButton.toolTip = "放弃未保存的修改"
+        saveButton.target = self
+        saveButton.action = #selector(saveClicked)
+        saveButton.toolTip = "保存设置（⌘S）"
+        let footerSpacer = NSView()
+        footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let footerButtons = CurtainTheme.stack(
+            [footerNote, footerSpacer, cancelButton, saveButton],
+            orientation: .horizontal,
+            spacing: 10,
+            alignment: .centerY
+        )
+        detail.addSubview(footerDivider)
+        detail.addSubview(footerButtons)
+        footerDivider.translatesAutoresizingMaskIntoConstraints = false
+        footerButtons.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            headerText.leadingAnchor.constraint(equalTo: detail.leadingAnchor, constant: 32),
+            headerText.topAnchor.constraint(equalTo: detail.topAnchor, constant: 40),
+            headerText.trailingAnchor.constraint(lessThanOrEqualTo: headerPill.leadingAnchor, constant: -18),
+
+            headerPill.trailingAnchor.constraint(equalTo: detail.trailingAnchor, constant: -32),
+            headerPill.centerYAnchor.constraint(equalTo: headerTitle.centerYAnchor),
+
+            scrollView.leadingAnchor.constraint(equalTo: detail.leadingAnchor, constant: 32),
+            scrollView.trailingAnchor.constraint(equalTo: detail.trailingAnchor, constant: -32),
+            scrollView.topAnchor.constraint(equalTo: headerText.bottomAnchor, constant: 20),
+            scrollView.bottomAnchor.constraint(equalTo: footerDivider.topAnchor, constant: -14),
+
+            document.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            document.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            document.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+
+            pageHost.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            pageHost.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            pageHost.topAnchor.constraint(equalTo: document.topAnchor),
+            pageHost.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+
+            footerDivider.leadingAnchor.constraint(equalTo: detail.leadingAnchor, constant: 32),
+            footerDivider.trailingAnchor.constraint(equalTo: detail.trailingAnchor, constant: -32),
+            footerDivider.bottomAnchor.constraint(equalTo: footerButtons.topAnchor, constant: -14),
+
+            footerButtons.leadingAnchor.constraint(equalTo: detail.leadingAnchor, constant: 32),
+            footerButtons.trailingAnchor.constraint(equalTo: detail.trailingAnchor, constant: -32),
+            footerButtons.bottomAnchor.constraint(equalTo: detail.bottomAnchor, constant: -18),
+        ])
+        return detail
     }
 
-    @objc private func saveClicked() {
-        var updated = config
-        updated.holdToAuthSeconds = min(5.0, max(1.0, Double(holdField.stringValue) ?? 2.0))
-        updated.hideCursorDuringCurtain = hideCursorSwitch.state == .on
-
-        config = updated
-        updated.save()
-        onSave?(updated)
-        window?.orderOut(nil)
+    func select(_ page: SettingsPage) {
+        selectedPage = page
+        for (key, row) in navRows {
+            row.isSelected = key == page
+        }
+        headerTitle.stringValue = page.title
+        headerSubtitle.stringValue = page.subtitle
+        headerPill.isHidden = page != .permissions
+        guard let selected = pages[page] else { return }
+        pageHost.subviews.forEach { $0.removeFromSuperview() }
+        pageHost.addSubview(selected)
+        selected.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            selected.leadingAnchor.constraint(equalTo: pageHost.leadingAnchor),
+            selected.trailingAnchor.constraint(equalTo: pageHost.trailingAnchor),
+            selected.topAnchor.constraint(equalTo: pageHost.topAnchor),
+            selected.bottomAnchor.constraint(equalTo: pageHost.bottomAnchor),
+        ])
+        scrollView.contentView.scroll(to: .zero)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
-    @objc private func cancelClicked() {
-        loadValues()
-        window?.orderOut(nil)
+    static var version: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+    }
+
+    static var build: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "-"
     }
 }

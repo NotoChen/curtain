@@ -26,6 +26,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/curtaind" "$APP/Contents/MacOS/curtaind"
 cp "$BIN_DIR/curtainctl" "$APP/Contents/MacOS/curtainctl"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
 
 echo "==> codesign (identity: $SIGN_ID)"
 if [ "$SIGN_ID" = "-" ]; then
@@ -41,6 +43,7 @@ echo "==> 签名信息"
 codesign -dv "$APP" 2>&1 | grep -E "Identifier|Authority|Signature|TeamIdentifier" || true
 
 echo "==> done: $APP"
+file "$APP/Contents/MacOS/curtaind"
 echo "启动：open $APP"
 echo "CLI： $APP/Contents/MacOS/curtainctl status"
 

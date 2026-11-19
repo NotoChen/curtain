@@ -13,6 +13,7 @@ let package = Package(
         .target(name: "CurtainKit"),
         .executableTarget(name: "curtaind", dependencies: ["CurtainKit"]),
         .executableTarget(name: "curtainctl", dependencies: ["CurtainKit"]),
+        .testTarget(name: "CurtainKitTests", dependencies: ["CurtainKit"]),
     ],
     swiftLanguageVersions: [.v5]
 )

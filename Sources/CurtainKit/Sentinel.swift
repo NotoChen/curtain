@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import IOKit.pwr_mgt
 
@@ -8,6 +9,16 @@ public final class Sentinel {
     private var displayAssertion: IOPMAssertionID = 0
     private var systemAssertion: IOPMAssertionID = 0
     private var active = false
+    public private(set) var displayAssertionActive = false
+    public private(set) var systemAssertionActive = false
+    public private(set) var hasExternalDisplay = false
+    public private(set) var lastError: String?
+    public var preventsClamshellSleep = false {
+        didSet {
+            guard active, oldValue != preventsClamshellSleep else { return }
+            updateClamshellAvailability()
+        }
+    }
 
     public init() {}
 
@@ -16,7 +27,7 @@ public final class Sentinel {
         let reason = "Curtain: keep the session awake while the curtain is up" as CFString
 
         let displayResult = IOPMAssertionCreateWithName(
-            kIOPMAssertionTypeNoDisplaySleep as CFString,
+            kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
             IOPMAssertionLevel(kIOPMAssertionLevelOn),
             reason,
             &displayAssertion
@@ -27,7 +38,13 @@ public final class Sentinel {
             reason,
             &systemAssertion
         )
-        active = (displayResult == kIOReturnSuccess) || (systemResult == kIOReturnSuccess)
+        displayAssertionActive = displayResult == kIOReturnSuccess
+        systemAssertionActive = systemResult == kIOReturnSuccess
+        active = displayAssertionActive || systemAssertionActive
+        lastError = active
+            ? nil
+            : "无法创建显示器或系统防休眠断言"
+        updateClamshellAvailability()
     }
 
     public func disable() {
@@ -37,6 +54,38 @@ public final class Sentinel {
         displayAssertion = 0
         systemAssertion = 0
         active = false
+        displayAssertionActive = false
+        systemAssertionActive = false
+        hasExternalDisplay = false
+    }
+
+    public var clamshellStatus: String {
+        guard preventsClamshellSleep else { return "关闭" }
+        guard active else { return "电源断言未建立" }
+        if hasExternalDisplay {
+            return "已请求；外接显示器在位"
+        }
+        return "仅空闲断言；无外接屏时由 macOS 电源策略决定"
+    }
+
+    private func updateClamshellAvailability() {
+        guard preventsClamshellSleep else {
+            hasExternalDisplay = false
+            return
+        }
+        var count: UInt32 = 0
+        guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else {
+            hasExternalDisplay = false
+            return
+        }
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetOnlineDisplayList(count, &displays, &count) == .success else {
+            hasExternalDisplay = false
+            return
+        }
+        hasExternalDisplay = displays.prefix(Int(count)).contains {
+            CGDisplayIsBuiltin($0) == 0
+        }
     }
 }
 

@@ -10,20 +10,8 @@ public enum Permissions {
         AXIsProcessTrusted()
     }
 
-    /// 触发系统「是否允许控制这台电脑」的弹窗，并把 app 加进辅助功能列表。
-    public static func promptAccessibility() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-    }
-
     public static func hasScreenRecording() -> Bool {
         CGPreflightScreenCaptureAccess()
-    }
-
-    /// 触发系统的屏幕录制授权，并把 app 加进列表。
-    @discardableResult
-    public static func promptScreenRecording() -> Bool {
-        CGRequestScreenCaptureAccess()
     }
 
     public static func openAccessibilitySettings() {

@@ -39,6 +39,9 @@ public enum LaunchAgent {
     /// 安装/更新并立即加载。executable 默认取当前可执行文件。
     @discardableResult
     public static func install(executable: String = CommandLine.arguments[0]) -> String? {
+        guard Paths.ensureSupportDir() else {
+            return "无法创建 \(Paths.supportDir.path)"
+        }
         let dir = plistURL.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
