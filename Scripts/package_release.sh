@@ -6,8 +6,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
-ZIP="dist/Curtain-${VERSION}.zip"
-DMG="dist/Curtain-${VERSION}.dmg"
+ZIP_NAME="Curtain-${VERSION}.zip"
+DMG_NAME="Curtain-${VERSION}.dmg"
+ZIP="dist/${ZIP_NAME}"
+DMG="dist/${DMG_NAME}"
 CHECKSUMS="dist/Curtain-${VERSION}.SHA256SUMS"
 DMG_ROOT="dist/.dmg-root"
 
@@ -16,7 +18,7 @@ mkdir -p dist
 rm -f "$ZIP" "$ZIP.sha256" "$DMG" "$DMG.sha256" "$CHECKSUMS"
 rm -rf "$DMG_ROOT"
 ditto -c -k --norsrc --keepParent build/Curtain.app "$ZIP"
-shasum -a 256 "$ZIP" > "$ZIP.sha256"
+(cd dist && shasum -a 256 "$ZIP_NAME" > "$ZIP_NAME.sha256")
 
 mkdir -p "$DMG_ROOT"
 cp -R build/Curtain.app "$DMG_ROOT/Curtain.app"
@@ -37,10 +39,10 @@ else
         "$DMG" >/dev/null
 fi
 rm -rf "$DMG_ROOT"
-shasum -a 256 "$DMG" > "$DMG.sha256"
+(cd dist && shasum -a 256 "$DMG_NAME" > "$DMG_NAME.sha256")
 (cd dist && shasum -a 256 \
-    "Curtain-${VERSION}.zip" \
-    "Curtain-${VERSION}.dmg" > "Curtain-${VERSION}.SHA256SUMS")
+    "$ZIP_NAME" \
+    "$DMG_NAME" > "Curtain-${VERSION}.SHA256SUMS")
 
 codesign --verify --deep --strict --verbose=2 build/Curtain.app
 plutil -lint build/Curtain.app/Contents/Info.plist
